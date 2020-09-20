@@ -3,17 +3,28 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/graphql-go/relay"
 	"github.com/mitchellh/mapstructure"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 )
 
 const ISO8601 = "2006-01-02T15:04:05.000Z0700"
 
+type RelayResolvedGlobalIntID struct {
+	Type string `json:"type"`
+	ID   int    `json:"id"`
+}
+
 func TestMapstructure(t *testing.T) {
 	input := map[string]interface{}{
+		"relayID":     "UXVlc3Rpb246Nzk0OTg=",
+		"relayIntID":  "UXVlc3Rpb246Nzk0OTg=",
 		"name":        123,           // number => string
 		"age":         "42",          // string => number
 		"id":          "38654707451", // string => number
@@ -24,6 +35,8 @@ func TestMapstructure(t *testing.T) {
 	}
 
 	type TestInput struct {
+		RelayID     *relay.ResolvedGlobalID
+		RelayIntID  *RelayResolvedGlobalIntID
 		Name        string
 		Age         int
 		ID          int
@@ -37,6 +50,8 @@ func TestMapstructure(t *testing.T) {
 		DecodeHook: mapstructure.ComposeDecodeHookFunc(
 			mapstructure.StringToTimeHookFunc(ISO8601), // ISO 8601
 			StringToUUIDHookFunc(),
+			StringToRelayResolvedGlobalIDHookFunc(),
+			StringToRelayResolvedGlobalIntIDHookFunc(),
 		),
 		WeaklyTypedInput: true,
 		Result:           &result,
@@ -53,13 +68,13 @@ func TestMapstructure(t *testing.T) {
 	}
 
 	fmt.Printf("%#v\n", result)
-	if result.UUIDSuccess.String() != "73fa5786-2eb9-4fa7-953c-834cc18bb9cf" {
-		t.Error("Expected UUID")
-	}
+	assert := assert.New(t)
 
-	if result.Time.Format(ISO8601) != input["time"].(string) {
-		t.Errorf("Time does not match: %s vs %s", result.Time.Format(ISO8601), input["time"].(string))
-	}
+	assert.Equal(result.UUIDSuccess.String(), input["uuidSuccess"])
+	assert.Equal(result.Time.Format(ISO8601), input["time"])
+	assert.Equal(result.RelayID.Type, "Question")
+	assert.Equal(result.RelayIntID.Type, "Question")
+	assert.Equal(result.RelayIntID.ID, 79498)
 }
 
 func StringToUUIDHookFunc() mapstructure.DecodeHookFunc {
@@ -76,5 +91,56 @@ func StringToUUIDHookFunc() mapstructure.DecodeHookFunc {
 		}
 
 		return uuid.Parse(data.(string))
+	}
+}
+
+func StringToRelayResolvedGlobalIDHookFunc() mapstructure.DecodeHookFunc {
+	return func(
+		f reflect.Type,
+		t reflect.Type,
+		data interface{}) (interface{}, error) {
+		if f.Kind() != reflect.String {
+			return data, nil
+		}
+
+		if t != reflect.TypeOf(relay.ResolvedGlobalID{}) {
+			return data, nil
+		}
+
+		resolvedID := relay.FromGlobalID(data.(string))
+		if resolvedID == nil {
+			return nil, fmt.Errorf("Failed to resolve: %s", data.(string))
+		}
+		return resolvedID, nil
+	}
+}
+
+func StringToRelayResolvedGlobalIntIDHookFunc() mapstructure.DecodeHookFunc {
+	return func(
+		f reflect.Type,
+		t reflect.Type,
+		data interface{}) (interface{}, error) {
+		if f.Kind() != reflect.String {
+			return data, nil
+		}
+
+		if t != reflect.TypeOf(RelayResolvedGlobalIntID{}) {
+			return data, nil
+		}
+
+		resolvedID := relay.FromGlobalID(data.(string))
+		if resolvedID == nil {
+			return nil, fmt.Errorf("Failed to resolve: %s", data.(string))
+		}
+
+		id, err := strconv.Atoi(resolvedID.ID)
+		if err != nil {
+			return nil, errors.Wrapf(err, "Unable to parse id: %s", resolvedID)
+		}
+
+		return &RelayResolvedGlobalIntID{
+			Type: resolvedID.Type,
+			ID:   id,
+		}, nil
 	}
 }
